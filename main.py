@@ -175,7 +175,6 @@ if arquivo_pdf is not None:
 
     tem_material_cliche = any(any(k in str(mat["Item / Processo"]).upper() for k in ["CLICHE", "FACA", "CLI00"]) for mat in materiais_encontrados)
     
-    # CORREÇÃO TURBO 1: Clichê apenas se houver menção na descrição do serviço
     precisa_cliche = any(k in servico.upper() for k in ["RELEVO", "HOT", "CLICHE"])
 
     if materiais_encontrados:
@@ -265,6 +264,7 @@ if arquivo_pdf is not None:
             else: st.success(f"✔️ Perda de {perdas}% adequada para a complexidade do item.")
         else: st.warning("⚠️ Taxa de perdas zerada ou não identificada.")
 
+        # --- AQUI ESTAVA O PROBLEMA! CORRIGIDO PARA MOSTRAR OS ALERTAS > 10% ---
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold; margin-top:15px;'>⚠️ Alertas Gerais de Custos</h6>", unsafe_allow_html=True)
         alertas_custo = 0
         if not df_mat_final.empty:
@@ -273,13 +273,21 @@ if arquivo_pdf is not None:
                 if r["Zerado"]: 
                     msg_mat = f"[CRÍTICO] Material '{r['Item / Processo']}' está ZERADO!"
                     st.error("🚨 " + msg_mat); alertas_custo+=1; lista_alertas_pdf.append(msg_mat)
+                elif r.get("Critico"):  # DEVOLVENDO A VISÃO! 👀
+                    msg_mat_crit = f"[ATENÇÃO] Material '{r['Item / Processo']}' representa uma parcela alta do custo (>10%): {r['% Part']}"
+                    st.warning("⚠️ " + msg_mat_crit); alertas_custo+=1; lista_alertas_pdf.append(msg_mat_crit)
+
         if not df_ind_final.empty:
             for _, r in df_ind_final.iterrows():
                 if "TOTAL" in r["Processo / Despesa"]: continue
                 if r["Zerado"]: 
                     msg_ind = f"[CRÍTICO] Processo '{r['Processo / Despesa']}' está ZERADO!"
                     st.error("🚨 " + msg_ind); alertas_custo+=1; lista_alertas_pdf.append(msg_ind)
-        if alertas_custo == 0: st.success("✔️ Todos os insumos possuem valores lançados.")
+                elif r.get("Critico"): # DEVOLVENDO A VISÃO! 👀
+                    msg_ind_crit = f"[ATENÇÃO] Processo '{r['Processo / Despesa']}' representa uma parcela alta do custo (>10%): {r['% Part']}"
+                    st.warning("⚠️ " + msg_ind_crit); alertas_custo+=1; lista_alertas_pdf.append(msg_ind_crit)
+
+        if alertas_custo == 0: st.success("✔️ Todos os insumos possuem valores lançados e participações adequadas.")
 
     with col_tabelas:
         st.markdown("##### 📊 Custos de Materiais para Orçamento")
