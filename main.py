@@ -213,17 +213,28 @@ if arquivo_pdf is not None:
     col_alertas, col_tabelas = st.columns([1, 1.2])
 
     with col_alertas:
+        # --- CORREÇÃO DA DIAGRAMAÇÃO AQUI (O FIM DA CEGUEIRA!) ---
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold;'>📐 Validação de Diagramação</h6>", unsafe_allow_html=True)
         q_sol_float = parse_brl(qtd_solicitada)
         q_cart_float = parse_brl(qtd_cartuchos)
         q_fls_float = parse_brl(qtd_folhas)
         
-        if q_cart_float > 0 and q_sol_float > 0:
+        if q_cart_float <= 0:
+            msg_diag_zero = "[CRÍTICO] A quantidade de Cartuchos/Formato está ZERADA! Verifique a diagramação estrutural."
+            st.error("🚨 " + msg_diag_zero); lista_alertas_pdf.append(msg_diag_zero)
+        elif q_fls_float <= 0:
+            msg_fls_zero = "[CRÍTICO] A Quantidade de Folhas de produção está ZERADA!"
+            st.error("🚨 " + msg_fls_zero); lista_alertas_pdf.append(msg_fls_zero)
+        elif q_sol_float <= 0:
+            msg_sol_zero = "[CRÍTICO] A Quantidade Solicitada do pedido está ZERADA ou não foi identificada."
+            st.error("🚨 " + msg_sol_zero); lista_alertas_pdf.append(msg_sol_zero)
+        else:
             fls_esperadas = q_sol_float / q_cart_float
             if abs(fls_esperadas - q_fls_float) > 100: 
                 msg_diag = f"[CRÍTICO] Incoerência Estrutural! Qtd Solicitada ({qtd_solicitada}) ÷ Cartuchos/Folha ({qtd_cartuchos}) resultaria em {format_brl(fls_esperadas)} folhas de produção, mas a ficha está com {qtd_folhas} folhas."
                 st.error("🚨 " + msg_diag); lista_alertas_pdf.append(msg_diag)
-            else: st.success("✔️ Sucesso: Diagramação aprovada e coerente.")
+            else: 
+                st.success("✔️ Sucesso: Diagramação aprovada e coerente.")
 
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold; margin-top:15px;'>🚛 Validação de Logística</h6>", unsafe_allow_html=True)
         if (tem_laminadora or tem_cortadeira):
@@ -264,7 +275,6 @@ if arquivo_pdf is not None:
             else: st.success(f"✔️ Perda de {perdas}% adequada para a complexidade do item.")
         else: st.warning("⚠️ Taxa de perdas zerada ou não identificada.")
 
-        # --- AQUI ESTAVA O PROBLEMA! CORRIGIDO PARA MOSTRAR OS ALERTAS > 10% ---
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold; margin-top:15px;'>⚠️ Alertas Gerais de Custos</h6>", unsafe_allow_html=True)
         alertas_custo = 0
         if not df_mat_final.empty:
@@ -273,7 +283,7 @@ if arquivo_pdf is not None:
                 if r["Zerado"]: 
                     msg_mat = f"[CRÍTICO] Material '{r['Item / Processo']}' está ZERADO!"
                     st.error("🚨 " + msg_mat); alertas_custo+=1; lista_alertas_pdf.append(msg_mat)
-                elif r.get("Critico"):  # DEVOLVENDO A VISÃO! 👀
+                elif r.get("Critico"): 
                     msg_mat_crit = f"[ATENÇÃO] Material '{r['Item / Processo']}' representa uma parcela alta do custo (>10%): {r['% Part']}"
                     st.warning("⚠️ " + msg_mat_crit); alertas_custo+=1; lista_alertas_pdf.append(msg_mat_crit)
 
@@ -283,7 +293,7 @@ if arquivo_pdf is not None:
                 if r["Zerado"]: 
                     msg_ind = f"[CRÍTICO] Processo '{r['Processo / Despesa']}' está ZERADO!"
                     st.error("🚨 " + msg_ind); alertas_custo+=1; lista_alertas_pdf.append(msg_ind)
-                elif r.get("Critico"): # DEVOLVENDO A VISÃO! 👀
+                elif r.get("Critico"):
                     msg_ind_crit = f"[ATENÇÃO] Processo '{r['Processo / Despesa']}' representa uma parcela alta do custo (>10%): {r['% Part']}"
                     st.warning("⚠️ " + msg_ind_crit); alertas_custo+=1; lista_alertas_pdf.append(msg_ind_crit)
 
