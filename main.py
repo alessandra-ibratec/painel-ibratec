@@ -46,7 +46,6 @@ st.markdown("---")
 
 arquivo_pdf = st.file_uploader("Arraste ou selecione o PDF do Metrics aqui", type=["pdf"])
 
-# Funções auxiliares para matemática e formatação
 def parse_brl(val_str):
     try: return float(str(val_str).replace('.', '').replace(',', '.'))
     except: return 0.0
@@ -86,7 +85,7 @@ if arquivo_pdf is not None:
         if "CLIENTE:" in l_upper:
             cliente_prov = l[l_upper.find("CLIENTE:")+8:].strip()
             if len(cliente_prov) > 1: cliente = cliente_prov
-            elif (i+1) < len(linhas): cliente = lines[i+1].strip()
+            elif (i+1) < len(linhas): cliente = linhas[i+1].strip()
                 
         if "SERVIÇO:" in l_upper or "SERVICO:" in l_upper: servico = l[l_upper.find("SERVI")+8:].strip()
         if "VENDEDOR:" in l_upper: vendedor = l[l_upper.find("VENDEDOR:")+9:].strip()
@@ -160,19 +159,25 @@ if arquivo_pdf is not None:
                     "Critico": pct_f > 10.0, "Zerado": ("0,00" in c_ind or c_ind == "0") and "COMPLEMENTO" not in l_upper
                 })
 
-    lista_alertas_pdf = [] # Guardar alertas dinâmicos para o relatório
+    # --- CORREÇÃO DO BUG DO NOME DO CLIENTE (PEPSICO) ---
+    cliente = re.sub(r'\s+\d{4,6}_.*$', '', cliente).strip()
+    if servico != "Não encontrado" and len(servico) > 3:
+        cliente = cliente.replace(servico, "").strip()
 
-    # --- PROCESSAMENTO DOS TURBOS (ANTES DA LINHA DE TOTAL) ---
+    lista_alertas_pdf = [] 
+
+    # --- PROCESSAMENTO DOS TURBOS ---
     tem_processo_colagem = any("COLAGEM" in str(ind["Processo / Despesa"]).upper() for ind in indiretos_encontrados)
     tem_material_adesivo = any(any(k in str(mat["Item / Processo"]).upper() for k in ["ADESIVO", "COLA"]) for mat in materiais_encontrados)
     
     tem_processo_verniz = any(any(k in str(ind["Processo / Despesa"]).upper() for k in ["VERNIZ", "SERIGRAFIA"]) for ind in indiretos_encontrados)
     tem_material_verniz = any(any(k in str(mat["Item / Processo"]).upper() for k in ["VERNIZ", "TINTA", "VUV", "VBA"]) for mat in materiais_encontrados)
 
-    tem_processo_corte = any("CORTE/VINCO" in str(ind["Processo / Despesa"]).upper() for ind in indiretos_encontrados)
     tem_material_cliche = any(any(k in str(mat["Item / Processo"]).upper() for k in ["CLICHE", "FACA", "CLI00"]) for mat in materiais_encontrados)
+    
+    # CORREÇÃO TURBO 1: Clichê apenas se houver menção na descrição do serviço
+    precisa_cliche = any(k in servico.upper() for k in ["RELEVO", "HOT", "CLICHE"])
 
-    # Adicionando Linha de TOTAIS comercial nas tabelas estruturais
     if materiais_encontrados:
         t_mat_custo = sum(parse_brl(m["Custo (R$)"]) for m in materiais_encontrados)
         t_mat_part = sum(parse_brl(m["% Part"].replace("%","")) for m in materiais_encontrados)
@@ -209,7 +214,6 @@ if arquivo_pdf is not None:
     col_alertas, col_tabelas = st.columns([1, 1.2])
 
     with col_alertas:
-        # VALIDAÇÃO DE DIAGRAMAÇÃO
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold;'>📐 Validação de Diagramação</h6>", unsafe_allow_html=True)
         q_sol_float = parse_brl(qtd_solicitada)
         q_cart_float = parse_brl(qtd_cartuchos)
@@ -222,7 +226,6 @@ if arquivo_pdf is not None:
                 st.error("🚨 " + msg_diag); lista_alertas_pdf.append(msg_diag)
             else: st.success("✔️ Sucesso: Diagramação aprovada e coerente.")
 
-        # VALIDAÇÃO DE LOGÍSTICA
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold; margin-top:15px;'>🚛 Validação de Logística</h6>", unsafe_allow_html=True)
         if (tem_laminadora or tem_cortadeira):
             if tem_frete: st.success("✔️ [OK] O roteiro possui Laminadora/Cortadeira e o Frete Interno foi incluído.")
@@ -230,7 +233,6 @@ if arquivo_pdf is not None:
                 msg_log = "[CRÍTICO] Roteiro exige Laminadora/Cortadeira, mas o FRETE COMPLEMENTAR NÃO FOI LANÇADO!"
                 st.error("🚨 " + msg_log); lista_alertas_pdf.append(msg_log)
 
-        # TURBO 1: VALIDAÇÃO CRUZADA PROCESSO VS INSUMO
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold; margin-top:15px;'>⚡ Turbo 1: Consistência Roteiro vs. Insumos</h6>", unsafe_allow_html=True)
         t1_limpo = True
         if tem_processo_colagem and not tem_material_adesivo:
@@ -239,12 +241,12 @@ if arquivo_pdf is not None:
         if tem_processo_verniz and not tem_material_verniz:
             msg_t1_verniz = "[CRÍTICO] Processo de VERNIZ/SERIGRAFIA ativo, mas nenhuma TINTA ou VERNIZ consta na lista de materiais!"
             st.error("🚨 " + msg_t1_verniz); lista_alertas_pdf.append(msg_t1_verniz); t1_limpo = False
-        if tem_processo_corte and not tem_material_cliche:
-            msg_t1_corte = "[ATENÇÃO] Roteiro com CORTE/VINCO ativo, mas sem custo de CLICHÊ ou FACA mapeado nos materiais."
+        if precisa_cliche and not tem_material_cliche:
+            msg_t1_corte = f"[ATENÇÃO] O serviço indica uso de acabamento especial, mas não há custo de CLICHÊ/FACA nos materiais."
             st.warning("⚠️ " + msg_t1_corte); lista_alertas_pdf.append(msg_t1_corte); t1_limpo = False
+        
         if t1_limpo: st.success("✔️ Relação entre Processos e Insumos validada com sucesso!")
 
-        # TURBO 4: TERMÔMETRO DE PERDAS (REFUGO)
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold; margin-top:15px;'>📉 Turbo 4: Termômetro de Perdas (Refugo)</h6>", unsafe_allow_html=True)
         perdas_float = parse_brl(perdas)
         try:
@@ -252,7 +254,7 @@ if arquivo_pdf is not None:
             cores_int = int(match_c.group(1)) if match_c else 0
         except: cores_int = 0
         
-        alta_complexidade = cores_int >= 6 or (tem_processo_verniz and tem_processo_colagem)
+        alta_complexidade = cores_int >= 6 or (tem_processo_verniz and tem_processo_colagem) or precisa_cliche
         if perdas_float > 0.0:
             if alta_complexidade and perdas_float < 3.5:
                 msg_t4 = f"[ATENÇÃO] Item de alta complexidade ({num_cores} cores / processos múltiplos), mas a taxa de perdas é de apenas {perdas}%. Risco de subestimar custos de refugo!"
@@ -263,7 +265,6 @@ if arquivo_pdf is not None:
             else: st.success(f"✔️ Perda de {perdas}% adequada para a complexidade do item.")
         else: st.warning("⚠️ Taxa de perdas zerada ou não identificada.")
 
-        # ALERTAS GERAIS DE CUSTOS
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold; margin-top:15px;'>⚠️ Alertas Gerais de Custos</h6>", unsafe_allow_html=True)
         alertas_custo = 0
         if not df_mat_final.empty:
@@ -318,7 +319,6 @@ if arquivo_pdf is not None:
         t1.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')), ('PADDING', (0,0), (-1,-1), 8)]))
         story.append(t1)
         
-        # Relatório Dinâmico de Erros dos Turbos
         story.append(Paragraph("⚠️ Resumo de Alertas de Auditoria (Turbos Ativos)", style_h2))
         if lista_alertas_pdf:
             for alerta in lista_alertas_pdf:
