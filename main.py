@@ -63,7 +63,6 @@ def extrair_texto_pdf(upload_file):
 if arquivo_pdf is not None:
     texto = extrair_texto_pdf(arquivo_pdf)
     
-    # --- 🔒 CADEADO DE SEGURANÇA ---
     texto_upper = texto.upper()
     if "IBRATEC" not in texto_upper and "ORÇAMENTO" not in texto_upper and "SERVIÇO" not in texto_upper:
         st.error("🔒 **Acesso Bloqueado:** O arquivo inserido não parece ser uma Ficha Técnica válida do sistema Metrics. Por favor, verifique o PDF e tente novamente.")
@@ -145,7 +144,8 @@ if arquivo_pdf is not None:
                     "Critico": pct_f > 10.0, "Zerado": "0,00" in c_total or c_total == "0"
                 })
 
-        proc_alvo = ["DESPESAS FIXAS", "ASSESSORIA", "IMP_", "CORTE/VINCO", "COLAGEM", "COMPLEMENTO", "REFILE", "CORTADEIRA", "LAMINADORA", "POLAR", "HOT ", "HOTSTAMPING", "RELEVO", "VERNIZ", "SERIGRAFIA", "DOBRADEIRA", "ACOPLAMENTO", "GUILHOTINA", "CTP", "REVISAO", "EMBALAGEM", "MONTAGEM", "CLICHE", "FRETE"]
+        # Removido a palavra "FRETE" solta daqui para não ler "Frete Sobre Vendas". Ele só pega "FRETE INTERNO" se for processo.
+        proc_alvo = ["DESPESAS FIXAS", "ASSESSORIA", "IMP_", "CORTE/VINCO", "COLAGEM", "COMPLEMENTO", "REFILE", "CORTADEIRA", "LAMINADORA", "POLAR", "HOT ", "HOTSTAMPING", "RELEVO", "VERNIZ", "SERIGRAFIA", "DOBRADEIRA", "ACOPLAMENTO", "GUILHOTINA", "CTP", "REVISAO", "EMBALAGEM", "MONTAGEM", "CLICHE", "FRETE INTERNO"]
         if any(p in l_upper for p in proc_alvo) and ("HR" in l_upper or "0,00" in l or "," in l) and not is_material:
             valores_ind = re.findall(r"([\d,.]+)", l)
             texto_linha = re.sub(r"[\d,.:+]+", "", l).replace("-", " ").replace(" HR ", " ").strip()
@@ -155,9 +155,13 @@ if arquivo_pdf is not None:
                 p_ind = valores_ind[-1]
                 try: pct_f = float(p_ind.replace(",", ".").replace("%", ""))
                 except: pct_f = 0.0
+                
+                # A Vacina gramatical para Complementar vs Complemento
+                is_zerado = ("0,00" in c_ind or c_ind == "0") and not any(x in l_upper for x in ["COMPLEMENTO", "COMPLEMENTAR"])
+                
                 indiretos_encontrados.append({
                     "Processo / Despesa": nome_proc, "Custo (R$)": c_ind, "% Part": f"{p_ind}%",
-                    "Critico": pct_f > 10.0, "Zerado": ("0,00" in c_ind or c_ind == "0") and "COMPLEMENTO" not in l_upper
+                    "Critico": pct_f > 10.0, "Zerado": is_zerado
                 })
 
     cliente = re.sub(r'\s+\d{4,6}_.*$', '', cliente).strip()
@@ -166,7 +170,6 @@ if arquivo_pdf is not None:
 
     lista_alertas_pdf = [] 
 
-    # --- NOVAS VALIDAÇÕES BLINDADAS ---
     tem_processo_colagem = any("COLAGEM" in str(ind["Processo / Despesa"]).upper() for ind in indiretos_encontrados)
     tem_material_adesivo = any(any(k in str(mat["Item / Processo"]).upper() for k in ["ADESIVO", "COLA"]) for mat in materiais_encontrados)
     
@@ -179,9 +182,15 @@ if arquivo_pdf is not None:
     tem_laminadora = any(any(k in str(ind["Processo / Despesa"]).upper() for k in ["LAMINADORA", "LAMINACAO"]) for ind in indiretos_encontrados)
     tem_cortadeira = any(any(k in str(ind["Processo / Despesa"]).upper() for k in ["CORTADEIRA", "POLAR"]) for ind in indiretos_encontrados)
     
-    # 🚨 O AJUSTE DE OURO: Verifica se o frete existe E se o custo não é zero!
-    tem_frete_valido = any("FRETE" in str(ind["Processo / Despesa"]).upper() and not ind.get("Zerado", False) for ind in indiretos_encontrados) or \
-                       any("FRETE" in str(mat["Item / Processo"]).upper() and not mat.get("Zerado", False) for mat in materiais_encontrados)
+    # Validador Blindado de Frete Logístico
+    def valida_frete(nome):
+        n = str(nome).upper()
+        if "FRETE" in n and "VENDAS" not in n and "COMPLEMENTAR" not in n:
+            return True
+        return False
+
+    tem_frete_valido = any(valida_frete(ind["Processo / Despesa"]) and not ind.get("Zerado", False) for ind in indiretos_encontrados) or \
+                       any(valida_frete(mat["Item / Processo"]) and not mat.get("Zerado", False) for mat in materiais_encontrados)
 
     if materiais_encontrados:
         t_mat_custo = sum(parse_brl(m["Custo (R$)"]) for m in materiais_encontrados)
@@ -242,11 +251,10 @@ if arquivo_pdf is not None:
 
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold; margin-top:15px;'>🚛 Validação de Logística</h6>", unsafe_allow_html=True)
         if (tem_laminadora or tem_cortadeira):
-            # AQUI ESTÁ A CORREÇÃO ENTRANDO EM AÇÃO!
             if tem_frete_valido: 
                 st.success("✔️ [OK] O roteiro possui Laminadora/Cortadeira e o Frete Interno foi cobrado.")
             else:
-                msg_log = "[CRÍTICO] Roteiro exige Laminadora/Cortadeira, mas o FRETE NÃO FOI LANÇADO ou ESTÁ ZERADO!"
+                msg_log = "[CRÍTICO] Roteiro exige Laminadora/Cortadeira, mas o FRETE INTERNO NÃO FOI LANÇADO ou ESTÁ ZERADO!"
                 st.error("🚨 " + msg_log); lista_alertas_pdf.append(msg_log)
 
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold; margin-top:15px;'>⚡ Turbo 1: Consistência Roteiro vs. Insumos</h6>", unsafe_allow_html=True)
