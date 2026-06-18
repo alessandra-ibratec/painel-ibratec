@@ -62,6 +62,13 @@ def extrair_texto_pdf(upload_file):
 
 if arquivo_pdf is not None:
     texto = extrair_texto_pdf(arquivo_pdf)
+    
+    # --- 🔒 CADEADO DE SEGURANÇA ---
+    texto_upper = texto.upper()
+    if "IBRATEC" not in texto_upper and "ORÇAMENTO" not in texto_upper and "SERVIÇO" not in texto_upper:
+        st.error("🔒 **Acesso Bloqueado:** O arquivo inserido não parece ser uma Ficha Técnica válida do sistema Metrics. Por favor, verifique o PDF e tente novamente.")
+        st.stop() 
+
     linhas = texto.split("\n")
     
     orcamento, cliente, servico, vendedor = "Não encontrado", "Não encontrado", "Não encontrado", "Não encontrado"
@@ -71,9 +78,7 @@ if arquivo_pdf is not None:
     
     materiais_encontrados = []
     indiretos_encontrados = []
-    tem_laminadora, tem_cortadeira, tem_frete = False, False, False
 
-    # --- VARREDURA BLINDADA ---
     for i, linha in enumerate(linhas):
         l = linha.strip()
         l_upper = l.upper()
@@ -116,10 +121,6 @@ if arquivo_pdf is not None:
                 unit_cartao = match_mp.group(3).strip()
                 custo_cartao = match_mp.group(4).strip()
 
-        if "LAMINADORA" in l_upper: tem_laminadora = True
-        if "CORTADEIRA" in l_upper: tem_cortadeira = True
-        if "FRETE" in l_upper: tem_frete = True
-
         padrao_unidades = re.search(r"([\d.,]+)\s*(KG|UN|M2|CM2|MIL|FLS|GR|MM)\s+([\d.,]+)\s+([\d.,]+)", l_upper)
         is_material = False
         if ("-ORC" in l_upper or "_ORC" in l_upper or " ORC" in l_upper): is_material = True
@@ -144,7 +145,8 @@ if arquivo_pdf is not None:
                     "Critico": pct_f > 10.0, "Zerado": "0,00" in c_total or c_total == "0"
                 })
 
-        proc_alvo = ["DESPESAS FIXAS", "ASSESSORIA", "IMP_", "CORTE/VINCO", "COLAGEM", "COMPLEMENTO", "REFILE", "CORTADEIRA", "LAMINADORA", "POLAR", "HOT ", "HOTSTAMPING", "RELEVO", "VERNIZ", "SERIGRAFIA", "DOBRADEIRA", "ACOPLAMENTO", "GUILHOTINA", "CTP", "REVISAO", "EMBALAGEM", "MONTAGEM", "CLICHE"]
+        # Adicionado "FRETE" na lista alvo para forçar a extração dos valores monetários dele
+        proc_alvo = ["DESPESAS FIXAS", "ASSESSORIA", "IMP_", "CORTE/VINCO", "COLAGEM", "COMPLEMENTO", "REFILE", "CORTADEIRA", "LAMINADORA", "POLAR", "HOT ", "HOTSTAMPING", "RELEVO", "VERNIZ", "SERIGRAFIA", "DOBRADEIRA", "ACOPLAMENTO", "GUILHOTINA", "CTP", "REVISAO", "EMBALAGEM", "MONTAGEM", "CLICHE", "FRETE"]
         if any(p in l_upper for p in proc_alvo) and ("HR" in l_upper or "0,00" in l or "," in l) and not is_material:
             valores_ind = re.findall(r"([\d,.]+)", l)
             texto_linha = re.sub(r"[\d,.:+]+", "", l).replace("-", " ").replace(" HR ", " ").strip()
@@ -159,14 +161,13 @@ if arquivo_pdf is not None:
                     "Critico": pct_f > 10.0, "Zerado": ("0,00" in c_ind or c_ind == "0") and "COMPLEMENTO" not in l_upper
                 })
 
-    # --- CORREÇÃO DO BUG DO NOME DO CLIENTE (PEPSICO) ---
     cliente = re.sub(r'\s+\d{4,6}_.*$', '', cliente).strip()
     if servico != "Não encontrado" and len(servico) > 3:
         cliente = cliente.replace(servico, "").strip()
 
     lista_alertas_pdf = [] 
 
-    # --- PROCESSAMENTO DOS TURBOS ---
+    # --- NOVAS VALIDAÇÕES VINCULADAS DIRETAMENTE AOS CUSTOS EXTRAÍDOS ---
     tem_processo_colagem = any("COLAGEM" in str(ind["Processo / Despesa"]).upper() for ind in indiretos_encontrados)
     tem_material_adesivo = any(any(k in str(mat["Item / Processo"]).upper() for k in ["ADESIVO", "COLA"]) for mat in materiais_encontrados)
     
@@ -174,8 +175,12 @@ if arquivo_pdf is not None:
     tem_material_verniz = any(any(k in str(mat["Item / Processo"]).upper() for k in ["VERNIZ", "TINTA", "VUV", "VBA"]) for mat in materiais_encontrados)
 
     tem_material_cliche = any(any(k in str(mat["Item / Processo"]).upper() for k in ["CLICHE", "FACA", "CLI00"]) for mat in materiais_encontrados)
-    
     precisa_cliche = any(k in servico.upper() for k in ["RELEVO", "HOT", "CLICHE"])
+
+    tem_laminadora = any(any(k in str(ind["Processo / Despesa"]).upper() for k in ["LAMINADORA", "LAMINACAO"]) for ind in indiretos_encontrados)
+    tem_cortadeira = any(any(k in str(ind["Processo / Despesa"]).upper() for k in ["CORTADEIRA", "POLAR"]) for ind in indiretos_encontrados)
+    tem_frete = any("FRETE" in str(ind["Processo / Despesa"]).upper() for ind in indiretos_encontrados) or \
+                any("FRETE" in str(mat["Item / Processo"]).upper() for mat in materiais_encontrados)
 
     if materiais_encontrados:
         t_mat_custo = sum(parse_brl(m["Custo (R$)"]) for m in materiais_encontrados)
@@ -193,7 +198,6 @@ if arquivo_pdf is not None:
     df_mat_final = pd.DataFrame(materiais_encontrados)
     df_ind_final = pd.DataFrame(ind_lista_limpa)
 
-    # --- INTERFACE TELA ---
     st.markdown("<h4>📋 Especificações Estruturais do Item</h4>", unsafe_allow_html=True)
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1: st.markdown(f"<div class='fpa-card bg-gradient-soft'><div class='fpa-metric-title'>Qtd. Folhas</div><div class='fpa-metric-value'>{qtd_folhas}</div></div>", unsafe_allow_html=True)
@@ -204,7 +208,7 @@ if arquivo_pdf is not None:
 
     st.markdown("<h4 style='margin-top: 10px;'>💰 Alvo Comercial & Preço</h4>", unsafe_allow_html=True)
     cc1, cc2, cc3, cc4 = st.columns(4)
-    with cc1: st.markdown(f"<div class='fpa-card bg-gradient-blue' style='border-left: 5px solid #0284C7 !important;'><div class='fpa-metric-title'>Orçamento</div><div class='fpa-metric-value'>N° {orcamento}</div></div>", unsafe_allow_html=True)
+    with cc1: st.markdown(f"<div class='fpa-card bg-gradient-blue' style='border-left: 5px solid #0284C7 !important;'><div class='fpa-metric-title'>Precificação</div><div class='fpa-metric-value'>N° {orcamento}</div></div>", unsafe_allow_html=True)
     with cc2: st.markdown(f"<div class='fpa-card bg-gradient-neutral'><div class='fpa-metric-title'>Cliente</div><div class='fpa-metric-value' style='font-size: 16px; margin-top:12px;'>{cliente}</div></div>", unsafe_allow_html=True)
     with cc3: st.markdown(f"<div class='fpa-card bg-gradient-teal' style='border-left: 5px solid #0D9488 !important;'><div class='fpa-metric-title'>Qtd. Solicitada</div><div class='fpa-metric-value'>{qtd_solicitada}</div></div>", unsafe_allow_html=True)
     with cc4: st.markdown(f"<div class='fpa-card bg-gradient-green' style='border-left: 5px solid #16A34A !important;'><div class='fpa-metric-title'>Preço de Venda Total</div><div class='fpa-metric-value' style='color: #15803D;'>R$ {preco_venda_total}</div></div>", unsafe_allow_html=True)
@@ -213,7 +217,6 @@ if arquivo_pdf is not None:
     col_alertas, col_tabelas = st.columns([1, 1.2])
 
     with col_alertas:
-        # --- CORREÇÃO DA DIAGRAMAÇÃO AQUI (O FIM DA CEGUEIRA!) ---
         st.markdown("<h6 style='color:#1E3A8A; font-weight:bold;'>📐 Validação de Diagramação</h6>", unsafe_allow_html=True)
         q_sol_float = parse_brl(qtd_solicitada)
         q_cart_float = parse_brl(qtd_cartuchos)
@@ -270,7 +273,7 @@ if arquivo_pdf is not None:
                 msg_t4 = f"[ATENÇÃO] Item de alta complexidade ({num_cores} cores / processos múltiplos), mas a taxa de perdas é de apenas {perdas}%. Risco de subestimar custos de refugo!"
                 st.warning("⚠️ " + msg_t4); lista_alertas_pdf.append(msg_t4)
             elif perdas_float > 12.0:
-                msg_t4 = f"[ATENÇÃO] Taxa de perda muito elevada ({perdas}%) identificada neste orçamento. Avaliar otimização de folha."
+                msg_t4 = f"[ATENÇÃO] Taxa de perda muito elevada ({perdas}%) identificada nesta precificação. Avaliar otimização de folha."
                 st.warning("⚠️ " + msg_t4); lista_alertas_pdf.append(msg_t4)
             else: st.success(f"✔️ Perda de {perdas}% adequada para a complexidade do item.")
         else: st.warning("⚠️ Taxa de perdas zerada ou não identificada.")
@@ -300,7 +303,7 @@ if arquivo_pdf is not None:
         if alertas_custo == 0: st.success("✔️ Todos os insumos possuem valores lançados e participações adequadas.")
 
     with col_tabelas:
-        st.markdown("##### 📊 Custos de Materiais para Orçamento")
+        st.markdown("##### 📊 Custos de Materiais para Precificação")
         if not df_mat_final.empty: st.dataframe(df_mat_final[["Item / Processo", "Custo (R$)", "% Part"]], width="stretch", hide_index=True)
         else: st.info("Nenhum item listado.")
         st.markdown("<h5 style='margin-top:20px;'>⚙️ Custos Indiretos e Despesas Fixas</h5>", unsafe_allow_html=True)
@@ -323,12 +326,12 @@ if arquivo_pdf is not None:
         style_bold_cell = ParagraphStyle('TableCellBold', parent=styles['Normal'], fontSize=9, leading=11, fontName='Helvetica-Bold')
         
         story.append(Paragraph("IBRATEC — Relatório de Auditoria FP&A", style_title))
-        story.append(Paragraph(f"Análise estrutural e validação do Orçamento N° {orcamento}", style_subtitle))
+        story.append(Paragraph(f"Análise estrutural e validação da Precificação N° {orcamento}", style_subtitle))
         story.append(Spacer(1, 10))
         
         story.append(Paragraph("💰 Alvo Comercial & Resumo Estrutural", style_h2))
         dados_comerciais = [
-            [Paragraph("<b>Orçamento:</b>", style_body), Paragraph(f"N° {orcamento}", style_body), Paragraph("<b>Qtd Folhas:</b>", style_body), Paragraph(qtd_folhas, style_body)],
+            [Paragraph("<b>Precificação:</b>", style_body), Paragraph(f"N° {orcamento}", style_body), Paragraph("<b>Qtd Folhas:</b>", style_body), Paragraph(qtd_folhas, style_body)],
             [Paragraph("<b>Cliente:</b>", style_body), Paragraph(cliente, style_body), Paragraph("<b>N° Cores:</b>", style_body), Paragraph(num_cores, style_body)],
             [Paragraph("<b>Qtd. Solicitada:</b>", style_body), Paragraph(qtd_solicitada, style_body), Paragraph("<b>Formato Cartão:</b>", style_body), Paragraph(formato_cartao, style_body)],
             [Paragraph("<b>Preço de Venda:</b>", style_body), Paragraph(f"R$ {preco_venda_total}", style_body), Paragraph("<b>Perdas Mapeadas:</b>", style_body), Paragraph(f"{perdas}%", style_body)]
